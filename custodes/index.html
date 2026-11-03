@@ -22,7 +22,7 @@
 <section id="summary" class="summary" aria-label="军表统计"></section>
 <nav class="mobile-tabs" aria-label="编辑区域"><button data-tab="library" class="active">① 选单位</button><button data-tab="army">② 我的军表</button><button data-tab="checks">③ 合规检查</button></nav>
 <div class="workspace"><section class="panel library" id="library-panel"><div class="panel-head"><h2>单位名录 <span class="number" id="catalog-count"></span></h2><small>悬停名称查看英文 · ＋ 加入</small></div><div class="library-controls"><input type="search" id="search" placeholder="搜索中文或英文名称…" aria-label="搜索单位"><div class="filters" id="filters"></div><label class="legend-label"><input type="checkbox" id="legends">允许并显示传奇单位</label></div><div id="catalog" class="catalog"></div></section>
-<div class="column-main" id="army-panel"><section class="panel det-panel"><div class="det-heading"><h2>分遣队组合</h2><button id="det-toggle" aria-expanded="true">收起选择</button></div><div id="selected-detachments" class="det-chips"></div><div id="detachments" class="det-options"></div></section><section class="panel roster-panel"><div class="panel-head"><h2 id="army-heading">我的军表</h2><small id="army-count">0 个单位</small></div><div id="print-meta" class="print-meta" hidden></div><div class="roster-body" id="army"></div><div class="export-bar"><button id="export-json">备份军表</button><button id="print" class="primary">打印 / PDF</button></div></section></div>
+<div class="column-main" id="army-panel"><section class="panel det-panel"><div class="det-heading"><h2>分遣队组合</h2><button id="det-toggle" aria-expanded="true">收起选择</button></div><div id="selected-detachments" class="det-chips"></div><div id="detachments" class="det-options"></div></section><section class="panel roster-panel"><div class="panel-head"><h2 id="army-heading">我的军表</h2><small id="army-count">0 个单位</small></div><div id="print-meta" class="print-meta" hidden></div><div class="roster-body" id="army"></div><div class="export-bar"><button id="export-json">备份军表</button><button id="print" class="primary">下载 PDF</button></div></section></div>
 <aside class="panel review-panel" id="checks-panel"><div class="panel-head"><h2>合规性检查</h2><small>随编辑更新</small></div><div id="checks"></div><details class="review-note"><summary>查看检查范围与规则来源</summary><p>采用官方中文《军务部野战手册》v1.6 的单位点数、征用分档、护卫名单、分遣队 DP、唯一词条和强化点数。</p><p>自动核对：点数、单位数量、模型规模、统帅、DP、唯一分遣队、强化数量与重复、联合单位强化冲突、领袖兼容、辅助单位归属、武器装备组合及传奇开关。</p><p>战线和角色分类按当前单位类别维护；审判修女的战线以及巫咒统帅资格随“虚无之女警戒团”变化。</p><p><b>需人工核对：</b>完整圣典中的分遣队编军条件、强化持有者关键词、装备的未收录特例、运输容量、特例规则。通过基础检查不等于赛事认证。</p><a href="https://mfm.warhammer-community.com/zh/adeptus-custodes" target="_blank" rel="noopener">官方手册 ↗</a> · <a href="https://www.warhammer-community.com/en-gb/articles/4a8o9tzw/adeptus-custodes-top-detachment-tips/" target="_blank" rel="noopener">虚无之女规则来源 ↗</a></details></aside></div>
 <footer class="page-foot"><span>帝皇禁军 · 36 种单位 / 13 个分遣队 · 数据保存在当前浏览器 · 请定期备份</span><span><a href="https://mfm.warhammer-community.com/zh/adeptus-custodes" target="_blank" rel="noopener">查看官方手册（联网）</a><a href="https://mfm.warhammer-community.com/zh/adeptus-custodes" target="_blank" rel="noopener">官方数据来源 ↗</a></span></footer>
 </div></main><input id="import-file" type="file" accept=".json,application/json" hidden><div id="toast" class="toast" role="status" hidden></div><dialog id="confirm-dialog"><h3>删除这份军表？</h3><p>删除后可以立即使用“撤销”恢复。建议先备份需要保留的军表。</p><div class="buttons"><button id="cancel-delete">取消</button><button id="confirm-delete" class="danger">删除军表</button></div></dialog><script>
@@ -211,6 +211,93 @@ function buildPrintHTML(data,engine,r){
 
 return {buildPrintHTML};
 })();
+const {pdfSections,encodePDF,generateRosterPDF}=(()=>{
+
+// All content stays on the device. High-resolution page images preserve CJK
+// glyphs using the browser's fonts, including when opened as an offline file.
+function pdfSections(data,engine,r){
+ const v=engine.validate(r),blocks=[];
+ const text=(text,size=10,bold=false,color='#283b32')=>({text:String(text??''),size,bold,color});
+ const block=(lines,space=9,rule=false)=>blocks.push({lines,space,rule});
+ const pair=(en,zh,size=12)=>[text(en,size,true),text(zh,9,false,'#657167')];
+ const heading=(en,zh)=>block([text(en+' / '+zh,12,true)],11,true);
+ block([text('MUNITORUM / ARMY ROSTER',9,true,'#6b784f'),text(r.name||'Army Roster',20,true),...pair('Adeptus Custodes','帝皇禁军',12),text(`${v.total} / ${v.profile.points} pts | ${v.dp} DP | ${r.entries.length} units / ${r.entries.reduce((n,e)=>n+e.models,0)} models`,11,true),text(`Munitorum Field Manual v${data.version} | ${data.date}`,8)],16,true);
+ heading('DETACHMENTS','分遣队');
+ for(const id of r.detachments){const d=engine.dets.get(id);if(d)block([...pair(`${d.enName||d.name} / ${d.dp} DP`,d.name)],8)}
+ if(!r.detachments.length)block([text('None selected / 未选择')]);
+ heading('UNITS','单位');
+ for(const [i,e] of v.rows.entries()){
+  const u=e.unit;if(!u)continue;const host=v.rows.find(h=>h.id===e.attachTo);
+  const lines=[...pair(`${String(i+1).padStart(2,'0')}. ${u.enName||u.name} / ${e.cost} pts`,u.name,13),text(`${e.models} models${r.warlord===e.id?' | WARLORD / 统帅':''}${u.legend?' | LEGENDS / 传奇':''}${e.surcharge?' | Subsequent unit cost / 后续单位加价':''}`,9)];
+  lines.push(text('Weapons & Wargear / 武器与装备',9,true));
+  for(const g of loadoutLines(e))lines.push(text(`${g.en} × ${g.count}`,10),text(`${g.zh} × ${g.count}`,8,false,'#657167'));
+  if(e.shields)lines.push(text(`Praesidium Shield: +${e.shields*(u.wargear[0]?.points||0)} pts (included) / 卫戍盾附加点数已计入`,8));
+  if(!getLoadout(e).confirmed)lines.push(text('UNCONFIRMED LEGACY LOADOUT / 旧军表装备尚未确认',9,true,'#a05f21'));
+  if(e.enhancementData)lines.push(...pair(`Enhancement: ${e.enhancementData.enName||e.enhancementData.name} (+${e.enhancementData.points} pts)`,`强化：${e.enhancementData.name}`,10));
+  if(e.attachTo)lines.push(...pair(`Attached to: ${host?.unit?.enName||'Missing bodyguard'} #${host?v.rows.indexOf(host)+1:'?'}`,`加入：${host?.unit?.name||'护卫单位不存在'}`,10));
+  if(e.notes)lines.push(text('Notes / Legacy notes / 战术及旧版备注',9,true),text(e.notes,9));
+  block(lines,13,true);
+ }
+ if(r.detachments.length){
+  heading('DETACHMENT RULES','分遣队规则');
+  block([text('Bilingual summaries. Consult the current Codex and errata for full wording and exceptions.',9),text('双语摘要；完整措辞与特例请查阅现行圣典及勘误。未包含全部战略与强化条文。',8)],12);
+  for(const id of r.detachments){const d=engine.dets.get(id);if(!d)continue;const q=d.rules;
+   block([...pair(`${d.enName||d.name} / ${d.dp} DP`,d.name,13),text(`${d.disposition}${d.unique?' | UNIQUE: '+d.unique:''}`,8),...(q?[...pair(q.nameEn,q.nameZh,11),text(q.summaryEn,10),text(q.summaryZh,9,false,'#657167')]:[text('Rules unavailable / 暂无规则摘要')])],12);
+   if(q?.favoured)block([text('Favoured Ka’tah / 偏好卡塔: '+q.favoured.name,10,true),text(q.favoured.summaryEn,10),text(q.favoured.summaryZh,9,false,'#657167'),text('Applies when the matching ka’tah is activated; other ka’tahs remain available.',8),text('激活对应卡塔时适用；仍可选择其他卡塔。',8)],10);
+   if(q)block([text('References / 参考来源 | '+q.checkedAt,8,true),...q.sources.flatMap(s=>[text(s.title,8),text(s.url,7)])],14,true);
+  }
+ }
+ heading('VALIDATION','编军检查');
+ block([text(`${v.errors.length?'Basic checks need attention / 基础检查未通过':'Basic checks passed / 基础检查通过'} | ${v.errors.length} errors | ${v.reviews.length} reviews`,10,true),...v.issues.map(i=>text(`[${i.severity==='error'?'ERROR / 错误':'REVIEW / 待复核'}] ${i.message}`,9)),text('Source / 来源: '+data.source,8)]);
+ return blocks;
+}
+
+// Minimal PDF image container. Byte offsets and stream sizes are measured in
+// bytes rather than JS string lengths; no server, CDN, or print dialog is used.
+function encodePDF(pages){
+ if(!pages.length)throw Error('PDF 没有页面');
+ const enc=new TextEncoder(),chunks=[],offsets=[0];let length=0;
+ const add=x=>{const b=typeof x==='string'?enc.encode(x):x;chunks.push(b);length+=b.length};
+ const object=(id,body,stream)=>{offsets[id]=length;add(`${id} 0 obj\n${body}`);if(stream){add('\nstream\n');add(stream);add('\nendstream')}add('\nendobj\n')};
+ add('%PDF-1.4\n% Custodes roster\n');
+ object(1,'<< /Type /Catalog /Pages 2 0 R >>');
+ object(2,`<< /Type /Pages /Count ${pages.length} /Kids [${pages.map((_,i)=>`${3+i*3} 0 R`).join(' ')}] >>`);
+ for(const [i,p] of pages.entries()){
+  const id=3+i*3,commands=enc.encode('q 595.28 0 0 841.89 0 0 cm /PageImage Do Q');
+  object(id,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /PageImage ${id+2} 0 R >> >> /Contents ${id+1} 0 R >>`);
+  object(id+1,`<< /Length ${commands.length} >>`,commands);
+  object(id+2,`<< /Type /XObject /Subtype /Image /Width ${p.width} /Height ${p.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.bytes.length} >>`,p.bytes);
+ }
+ const xref=length;add(`xref\n0 ${offsets.length}\n0000000000 65535 f \n`);
+ for(let i=1;i<offsets.length;i++)add(String(offsets[i]).padStart(10,'0')+' 00000 n \n');
+ add(`trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+ return new Blob(chunks,{type:'application/pdf'});
+}
+
+async function generateRosterPDF(data,engine,r){
+ await document.fonts.ready;
+ const width=595.28,height=841.89,margin=40,bottom=height-48,scale=2.5;
+ const canvas=document.createElement('canvas');canvas.width=Math.ceil(width*scale);canvas.height=Math.ceil(height*scale);
+ const ctx=canvas.getContext('2d');if(!ctx)throw Error('浏览器不支持 PDF 页面绘制');
+ const pages=[];let y=margin;
+ const font=l=>`${l.bold?'600':'400'} ${l.size}px "Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif`;
+ const clear=()=>{ctx.setTransform(scale,0,0,scale,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,width,height);y=margin};
+ const flush=async()=>{ctx.fillStyle='#7c847d';ctx.font='8px sans-serif';ctx.fillText('ADEPTUS CUSTODES / ARMY ROSTER',margin,height-25);ctx.fillText(String(pages.length+1),width-margin-12,height-25);const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.96));if(!blob)throw Error('PDF 页面生成失败');pages.push({width:canvas.width,height:canvas.height,bytes:new Uint8Array(await blob.arrayBuffer())});clear()};
+ const wrap=l=>{ctx.font=font(l);const result=[];for(const paragraph of l.text.split(/\r?\n/)){let line='';const tokens=paragraph.match(/\s+|[\u3400-\u9fff]|[^\s\u3400-\u9fff]+/gu)||[''];for(const token of tokens){if(ctx.measureText(line+token).width<=width-2*margin){line+=token;continue}if(line.trim()){result.push({...l,text:line.trimEnd()});line=''}if(ctx.measureText(token).width>width-2*margin){for(const char of token){if(ctx.measureText(line+char).width>width-2*margin){result.push({...l,text:line});line=''}line+=char}}else line=token.trimStart()}result.push({...l,text:line.trimEnd()})}return result};
+ clear();
+ const blocks=pdfSections(data,engine,r);
+ for(let i=0;i<blocks.length;i++){
+  const b=blocks[i],lines=b.lines.flatMap(wrap),lineHeight=l=>l.size*1.48+2,total=lines.reduce((n,l)=>n+lineHeight(l),0)+b.space+(b.rule?7:0);
+  const next=blocks[i+1]?.lines[0];const reserve=b.lines.length===1&&b.lines[0].bold&&next?next.size*3:0;
+  if(y>margin&&total+reserve<=bottom-margin&&y+total+reserve>bottom)await flush();
+  for(const l of lines){const h=lineHeight(l);if(y+h>bottom)await flush();ctx.font=font(l);ctx.fillStyle=l.color;ctx.textBaseline='top';ctx.fillText(l.text,margin,y);y+=h}
+  if(b.rule){if(y+7>bottom)await flush();ctx.strokeStyle='#d8dfd9';ctx.lineWidth=0.6;ctx.beginPath();ctx.moveTo(margin,y+3);ctx.lineTo(width-margin,y+3);ctx.stroke();y+=7}y+=b.space;
+ }
+ if(y>margin)await flush();return encodePDF(pages);
+}
+
+return {pdfSections,encodePDF,generateRosterPDF};
+})();
 const {recommendedName,makeRecommendedRoster,recommendedRosterHTML}=(()=>{
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const recommendedName='千分禁军 · 均衡控场';
@@ -273,13 +360,18 @@ async function init(){try{data={"version":"1.6","date":"2026-11-03","source":"ht
  $('#loading').hidden=true;$('#app').hidden=false;render();if(location.hash==='#recommended-1000')openRecommendation();if(recovery)$('#save-status').textContent=recovery;
  $('#search').oninput=e=>{query=e.target.value.trim();renderCatalog()};$('#legends').onchange=e=>change(r=>r.allowLegends=e.target.checked);$('#battle-size').onchange=e=>change(r=>r.size=e.target.value);$('#roster-name').onchange=e=>change(r=>r.name=e.target.value.trim()||'未命名军表');$('#roster-select').onchange=e=>change(()=>db.activeId=e.target.value);$('#det-toggle').onclick=()=>{detOpen=!detOpen;renderDetachments()};
  $('#recommended-1000').onclick=openRecommendation;$('#new-roster').onclick=()=>change(()=>{if(db.rosters.length>=100){toast('最多保存 100 份军表，请先导出并删除不需要的军表。');return}const r=newRoster('禁军军表 '+(db.rosters.length+1));db.rosters.push(r);db.activeId=r.id});$('#duplicate-roster').onclick=()=>change(r=>{if(db.rosters.length>=100){toast('最多保存 100 份军表');return}const c=copyRoster(r);db.rosters.push(c);db.activeId=c.id});$('#undo').onclick=()=>{if(!undo.length)return;db=JSON.parse(undo.pop());persist();render();toast('已撤销上一步')};$('#delete-roster').onclick=()=>$('#confirm-dialog').showModal();$('#cancel-delete').onclick=()=>$('#confirm-dialog').close();$('#confirm-delete').onclick=()=>{$('#confirm-dialog').close();change(r=>{db.rosters=db.rosters.filter(x=>x.id!==r.id);if(!db.rosters.length)db.rosters.push(newRoster());db.activeId=db.rosters[0].id})};
- $('#export-json').onclick=()=>saveFile(filename()+'.json',JSON.stringify({schemaVersion:1,dataVersion:data.version,roster:roster()},null,2),'application/json');$('#print').onclick=openPrintPreview;$('#import-button').onclick=()=>$('#import-file').click();$('#import-file').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>1024*1024)throw Error('文件超过 1 MB，请选择本工具导出的军表 JSON。');if(db.rosters.length>=100)throw Error('最多保存 100 份军表，请先备份并删除不需要的军表。');const r=engine.parseImport(JSON.parse(await file.text()));r.id=uid();change(()=>{db.rosters.push(r);db.activeId=r.id});toast('军表已导入并重新计算点数。')}catch(err){toast('导入失败：'+err.message)}e.target.value=''};
+ $('#export-json').onclick=()=>saveFile(filename()+'.json',JSON.stringify({schemaVersion:1,dataVersion:data.version,roster:roster()},null,2),'application/json');$('#print').onclick=downloadPDF;$('#import-button').onclick=()=>$('#import-file').click();$('#import-file').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>1024*1024)throw Error('文件超过 1 MB，请选择本工具导出的军表 JSON。');if(db.rosters.length>=100)throw Error('最多保存 100 份军表，请先备份并删除不需要的军表。');const r=engine.parseImport(JSON.parse(await file.text()));r.id=uid();change(()=>{db.rosters.push(r);db.activeId=r.id});toast('军表已导入并重新计算点数。')}catch(err){toast('导入失败：'+err.message)}e.target.value=''};
  }catch(err){$('#loading').className='fatal';$('#loading').textContent='无法载入军表工具：'+err.message+'。请刷新重试，或打开点数手册。'}}
 function setTheme(dark){document.body.classList.toggle('dark',dark);$('#theme').textContent=dark?'☼':'☾';try{localStorage.setItem('custodes-theme',dark?'dark':'light')}catch{}}
 try{setTheme(localStorage.getItem('custodes-theme')==='dark')}catch{}$('#theme').onclick=()=>setTheme(!document.body.classList.contains('dark'));
 function openRecommendation(){let dialog=$('#recommend-dialog');if(!dialog){dialog=document.createElement('dialog');dialog.id='recommend-dialog';dialog.className='recommend-dialog';dialog.setAttribute('aria-labelledby','recommend-title');dialog.innerHTML='<div class="recommend-toolbar"><h2 id="recommend-title">1000点推荐军表</h2><div><button id="recommend-close">关闭</button><button id="recommend-load" class="primary">载入为新军表</button></div></div><div class="recommend-body" id="recommend-content"></div>';document.body.append(dialog);$('#recommend-close').onclick=()=>dialog.close();$('#recommend-load').onclick=()=>{if(db.rosters.length>=100){toast('已达100份军表上限，请先备份并删除不需要的军表。');return}const r=makeRecommendedRoster(uid),v=engine.validate(r);if(v.errors.length||v.total!==1000){toast('推荐军表与当前数据不匹配，请先核对数据。');return}dialog.close();detOpen=false;mobileTab='army';change(()=>{db.rosters.push(r);db.activeId=r.id});applyMobile();$('#army-heading').scrollIntoView({behavior:'smooth',block:'start'});toast('已新增1000点军表；原军表保留。')}}$('#recommend-content').innerHTML=recommendedRosterHTML(data,engine);dialog.showModal();dialog.scrollTop=0}
 function preparePrint(){let doc=$('#print-document');if(!doc){doc=document.createElement('section');doc.id='print-document';doc.className='print-sheet';doc.hidden=true;document.body.append(doc)}doc.innerHTML=buildPrintHTML(data,engine,roster());return doc}
-function openPrintPreview(){const doc=preparePrint();let dialog=$('#pdf-preview');if(!dialog){dialog=document.createElement('dialog');dialog.id='pdf-preview';dialog.className='pdf-preview';dialog.setAttribute('aria-labelledby','pdf-preview-title');dialog.innerHTML='<div class="pdf-preview-toolbar"><strong id="pdf-preview-title">PDF 预览 · 英文为主 / 中文为辅</strong><div><button id="pdf-close">关闭</button> <button id="pdf-save" class="primary">打印 / 保存 PDF</button></div></div><div class="print-sheet" id="pdf-preview-content"></div>';document.body.append(dialog);$('#pdf-close').onclick=()=>dialog.close();$('#pdf-save').onclick=()=>{dialog.close();preparePrint();window.print()}}$('#pdf-preview-content').innerHTML=doc.innerHTML;dialog.showModal();dialog.scrollTop=0}
+async function downloadPDF(){
+ const button=$('#print');if(button.disabled)return;const snapshot=structuredClone(roster());button.disabled=true;button.textContent='正在生成 PDF…';button.setAttribute('aria-busy','true');
+ try{hideNameTip();const blob=await generateRosterPDF(data,engine,snapshot);const name=(snapshot.name||'帝皇禁军军表').replace(/[<>:"/\\|?*]/g,'_').slice(0,80);saveFile(name+'.pdf',blob,'application/pdf');toast('PDF 已生成并开始下载。')}
+ catch(err){toast('PDF 下载失败：'+err.message+'。请重试。')}
+ finally{button.disabled=false;button.textContent='下载 PDF';button.removeAttribute('aria-busy')}
+}
 window.addEventListener('beforeprint',()=>{hideNameTip();document.querySelector('#pdf-preview')?.close();document.querySelector('#det-rules-dialog')?.close();document.querySelector('#recommend-dialog')?.close();if(data&&db)preparePrint()});
 let nameTipTimer,nameTipTarget;
 function hideNameTip(){clearTimeout(nameTipTimer);const tip=$('#unit-name-tooltip');if(tip)tip.hidden=true;if(nameTipTarget)nameTipTarget.removeAttribute('aria-describedby');nameTipTarget=null}
