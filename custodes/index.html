@@ -344,7 +344,7 @@ function buildPrintHTML(data,engine,r){
 
 return {buildPrintHTML};
 })();
-const {selectedCodexEntries,selectedWeaponSummaryHTML}=(()=>{
+const {selectedCodexEntries,selectedWeaponSummaryHTML,groupedCodexEntries}=(()=>{
 const normalize=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
 function selectedCodexEntries(rows){
  return rows.filter(e=>e.unit).map(e=>{
@@ -364,7 +364,20 @@ function selectedWeaponSummaryHTML(entry){
  return `<section class="selected-weapon-codex" aria-label="当前装备简易数据">${table('ranged')}${table('melee')}${equipment.map(a=>`<p class="selected-equipment-rule"><strong>${escapeHTML(a.name)}</strong> ${escapeHTML(a.summaryZh)}</p>`).join('')}</section>`;
 }
 
-return {selectedCodexEntries,selectedWeaponSummaryHTML};
+function groupedCodexEntries(rows){
+ const cards=selectedCodexEntries(rows),groups=[],lookup=new Map();
+ const canonical=card=>({unit:card.unit.id,gear:card.gear.map(g=>[g.en,g.count]).sort((a,b)=>a[0].localeCompare(b[0])),abilities:card.abilities.map(a=>[a.name,a.summaryZh]),core:card.core,enhancement:card.enhancement?.id||card.enhancement?.enName||'',confirmed:card.confirmed});
+ for(const card of cards){
+  const host=rows.find(e=>e.id===card.attachTo);
+  const leaders=cards.filter(c=>c.attachTo===card.id).map(c=>JSON.stringify(canonical(c))).sort();
+  const key=JSON.stringify([canonical(card),host?.unit?.id||'',host?.enhancementData?.id||'',leaders]);
+  const member={...card,rosterIndex:rows.findIndex(e=>e.id===card.id)+1};
+  if(lookup.has(key))lookup.get(key).members.push(member);else{const group={...card,members:[member]};lookup.set(key,group);groups.push(group)}
+ }
+ return groups;
+}
+
+return {selectedCodexEntries,selectedWeaponSummaryHTML,groupedCodexEntries};
 })();
 const {pdfSections,encodePDF,generateRosterPDF}=(()=>{
 
@@ -415,8 +428,9 @@ function pdfSections(data,engine,r){
  if(v.rows.length){
   blocks.push({lines:[text('SELECTED UNIT CODEX / 已选单位简易 Codex',14,true)],space:12,rule:true,pageBreakBefore:true});
   block([text('Only the weapons and equipment selected in this roster are shown. Ranged and melee profiles, including alternative modes, are listed separately.',9),text('只列本军表已选武器与装备；同一武器的远程、近战及可用模式分别列出。单位能力为中文摘要，装备能力仅在携带时收录。',8),text('Unit abilities are reference summaries; detachment rules are listed earlier. Full Stratagem texts and weapon keyword explanations are not included.',8),text('分遣队规则见前文；此附录不包含全部战略条文或武器关键词释义。',8)],12);
-  for(const [index,c] of selectedCodexEntries(v.rows).entries()){
+  for(const [index,c] of groupedCodexEntries(v.rows).entries()){
    const lines=[...pair(`${String(index+1).padStart(2,'0')}. ${c.unit.enName||c.unit.name}`,c.unit.name,13)];
+   if(c.members.length>1)lines.push(text('Applies to roster units / 适用军表单位: '+c.members.map(m=>'#'+m.rosterIndex).join(', '),9,true));
    if(!c.confirmed)lines.push(text('UNCONFIRMED LOADOUT / 装备尚未确认，请先在军表核对配置。',9,true,'#a05f21'));
    if(!c.available){lines.push(text('Summary unavailable. See the linked datasheet. / 暂无摘要，请查阅原数据表。',9));block(lines,12,true);continue}
    const stats=c.unit.codexSummary.stats||[];
@@ -428,7 +442,7 @@ function pdfSections(data,engine,r){
    const nonWeapons=c.gear.filter(g=>!c.weapons.some(w=>w.zh===g.zh));
    if(nonWeapons.length)lines.push(text('Wargear / 装备: '+nonWeapons.map(g=>g.en+' / '+g.zh+' × '+g.count).join('; '),9));
    const rules=[];
-   if(c.attachTo){const host=v.rows.find(e=>e.id===c.attachTo);rules.push(...pair(`Attached to: ${host?.unit?.enName||'Missing bodyguard'} #${host?v.rows.indexOf(host)+1:'?'}`,`本军表加入：${host?.unit?.name||'护卫单位不存在'}`,10))}
+   for(const member of c.members.filter(m=>m.attachTo)){const host=v.rows.find(e=>e.id===member.attachTo);rules.push(...pair(`${c.members.length>1?'Unit #'+member.rosterIndex+' | ':''}Attached to: ${host?.unit?.enName||'Missing bodyguard'} #${host?v.rows.indexOf(host)+1:'?'}`,`本军表加入：${host?.unit?.name||'护卫单位不存在'}`,10))}
    if(c.enhancement)rules.push(...pair(`Selected enhancement: ${c.enhancement.enName||c.enhancement.name} (+${c.enhancement.points} pts)`,`已选强化：${c.enhancement.name}`,10));
    for(const [kind,value] of Object.entries(c.core))rules.push(text((kind==='CORE ABILITIES'?'Core abilities / 核心能力: ':'Army rules / 军队规则: ')+value,9));
    rules.push(text('UNIT & WARGEAR ABILITIES / 单位与已选装备能力',10,true));
